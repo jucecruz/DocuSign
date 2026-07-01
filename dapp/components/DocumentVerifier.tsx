@@ -1,21 +1,41 @@
 'use client'
 
+/**
+ * DocumentVerifier.tsx — Verificación de documentos con link de descarga IPFS.
+ *
+ * Flujo:
+ *   1. El usuario sube el mismo archivo que fue registrado.
+ *   2. Se calcula el hash keccak256 localmente.
+ *   3. Se consulta isDocumentStored(hash) → si no existe: "not-found".
+ *   4. Se consulta getDocumentInfo(hash) → datos completos incluido el CID.
+ *   5. Si se proporcionó dirección de firmante, se compara con la almacenada.
+ *   6. Si el documento tiene CID, se muestra un botón "Download from IPFS".
+ *
+ * Resultados posibles:
+ *   'valid'     → Documento registrado; firmante coincide (o no se verificó).
+ *   'invalid'   → Documento registrado pero firmante no coincide.
+ *   'not-found' → Hash no está en el contrato.
+ */
+
 import { useState } from 'react'
 import { ethers } from 'ethers'
-import { ShieldCheck, ShieldX, Search, User } from 'lucide-react'
+import { ShieldCheck, ShieldX, Search, User, Download } from 'lucide-react'
 import { FileUploader } from './FileUploader'
 import { useContract } from '@/hooks/useContract'
 import { useWallet } from '@/contexts/MetaMaskContext'
+import { getCIDGatewayURL } from '@/lib/ipfs'
 
 export function DocumentVerifier() {
   const { isConnected } = useWallet()
   const { isDocumentStored, getDocumentInfo } = useContract()
 
-  const [hash, setHash] = useState<string | null>(null)
+  const [hash, setHash]             = useState<string | null>(null)
   const [signerInput, setSignerInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<'valid' | 'invalid' | 'not-found' | null>(null)
-  const [docInfo, setDocInfo] = useState<{ signer: string; timestamp: bigint; signature: string } | null>(null)
+  const [loading, setLoading]       = useState(false)
+  const [result, setResult]         = useState<'valid' | 'invalid' | 'not-found' | null>(null)
+  const [docInfo, setDocInfo]       = useState<{
+    signer: string; timestamp: bigint; signature: string; cid: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const handleHashReady = (computed: string) => {
@@ -37,12 +57,19 @@ export function DocumentVerifier() {
         return
       }
       const info = await getDocumentInfo(hash)
-      setDocInfo({ signer: info.signer, timestamp: info.timestamp, signature: info.signature })
+      setDocInfo({
+        signer:    info.signer,
+        timestamp: info.timestamp,
+        signature: info.signature,
+        cid:       info.cid,  // CID de IPFS (puede ser "" si no se usó IPFS)
+      })
 
       const inputAddress = signerInput.trim()
       if (inputAddress && ethers.isAddress(inputAddress)) {
+        // Comparación case-insensitive de direcciones Ethereum
         setResult(info.signer.toLowerCase() === inputAddress.toLowerCase() ? 'valid' : 'invalid')
       } else {
+        // Sin dirección de firmante: el documento existe, eso es suficiente
         setResult('valid')
       }
     } catch (e) {
@@ -55,7 +82,7 @@ export function DocumentVerifier() {
   return (
     <div className="space-y-6">
 
-      {/* Paso 1: archivo */}
+      {/* Paso 1: Selección de archivo */}
       <FileUploader onHashReady={handleHashReady} />
 
       {/* Campo opcional de firmante */}
@@ -145,7 +172,9 @@ export function DocumentVerifier() {
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-1">
               <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider w-24 shrink-0">Stored at</span>
-              <span className="text-xs text-zinc-700 dark:text-zinc-300">{new Date(Number(docInfo.timestamp) * 1000).toLocaleString()}</span>
+              <span className="text-xs text-zinc-700 dark:text-zinc-300">
+                {new Date(Number(docInfo.timestamp) * 1000).toLocaleString()}
+              </span>
             </div>
             <div className="flex flex-col sm:flex-row sm:items-start gap-1">
               <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider w-24 shrink-0 mt-0.5">Signature</span>
@@ -153,6 +182,32 @@ export function DocumentVerifier() {
                 {docInfo.signature.slice(0, 24)}…{docInfo.signature.slice(-10)}
               </span>
             </div>
+
+            {/* CID de IPFS: solo si el documento fue subido a IPFS */}
+            {docInfo.cid ? (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 pt-1">
+                <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider w-24 shrink-0">IPFS</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 truncate">
+                    {docInfo.cid}
+                  </span>
+                  <a
+                    href={getCIDGatewayURL(docInfo.cid)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium transition-colors"
+                  >
+                    <Download className="w-3 h-3" />
+                    Download
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 pt-1">
+                <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider w-24 shrink-0">IPFS</span>
+                <span className="text-xs text-zinc-400 dark:text-zinc-600 italic">Not pinned to IPFS</span>
+              </div>
+            )}
           </div>
         </div>
       )}

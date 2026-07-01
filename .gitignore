@@ -24,3 +24,5 @@ docs/
 !.env.example
 
 dapp/node_modules
+*.zip
+kubo/

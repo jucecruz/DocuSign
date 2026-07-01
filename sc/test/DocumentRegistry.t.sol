@@ -21,7 +21,7 @@ contract DocumentRegistryTest is Test {
     // Datos de prueba compartidos por todos los tests
     // -------------------------------------------------------------------------
 
-    /// @dev Dirección de firmante simulada (no necesita ser una cuenta real en Foundry)
+    /// @dev Dirección de firmante simulada
     address internal signer = address(0x1234);
 
     /// @dev Hash del "contenido" del documento simulado
@@ -33,12 +33,14 @@ contract DocumentRegistryTest is Test {
     /// @dev Timestamp Unix fijo para pruebas reproducibles
     uint256 internal timestamp = 1700000000;
 
+    /// @dev CID de IPFS simulado (formato CIDv0 típico)
+    string internal cid = "QmTestCID1234567890abcdef";
+
     // -------------------------------------------------------------------------
     // Configuración inicial (se ejecuta antes de cada test)
     // -------------------------------------------------------------------------
 
     function setUp() public {
-        // Despliega una instancia fresca del contrato antes de cada test
         registry = new DocumentRegistry();
     }
 
@@ -46,41 +48,51 @@ contract DocumentRegistryTest is Test {
     // storeDocumentHash — almacenar un documento
     // =========================================================================
 
-    /// @notice Verifica que almacenar un documento válido funciona correctamente
+    /// @notice Verifica que almacenar un documento válido (con CID) funciona correctamente
     function test_StoreDocument_Success() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         assertTrue(registry.isDocumentStored(docHash));
     }
 
-    /// @notice Verifica que se emite el evento DocumentStored con los parámetros correctos
+    /// @notice Verifica que se puede almacenar un documento sin CID (CID vacío = IPFS no usado)
+    function test_StoreDocument_WithEmptyCID() public {
+        registry.storeDocumentHash(docHash, "", timestamp, signature, signer);
+
+        assertTrue(registry.isDocumentStored(docHash));
+        DocumentRegistry.Document memory doc = registry.getDocumentInfo(docHash);
+        assertEq(doc.cid, "");
+    }
+
+    /// @notice Verifica que se emite el evento DocumentStored con el CID correcto
     function test_StoreDocument_EmitsEvent() public {
         // vm.expectEmit: (checkTopic1, checkTopic2, checkTopic3, checkData)
         // Los dos primeros topics son los parámetros indexados (hash, signer)
+        // checkData=true valida también los campos no-indexados (timestamp, cid)
         vm.expectEmit(true, true, false, true);
-        emit DocumentRegistry.DocumentStored(docHash, signer, timestamp);
+        emit DocumentRegistry.DocumentStored(docHash, signer, timestamp, cid);
 
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
     }
 
     /// @notice Verifica que no se puede registrar el mismo hash dos veces
     function test_StoreDocument_RejectsDuplicate() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         vm.expectRevert("Document already exists");
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
     }
 
     /// @notice Verifica que se rechaza address(0) como firmante
     function test_StoreDocument_RejectsZeroSigner() public {
         vm.expectRevert("Invalid signer address");
-        registry.storeDocumentHash(docHash, timestamp, signature, address(0));
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, address(0));
     }
 
     /// @notice Verifica que se rechaza una firma vacía
     function test_StoreDocument_RejectsEmptySignature() public {
         vm.expectRevert("Signature cannot be empty");
-        registry.storeDocumentHash(docHash, timestamp, bytes(""), signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, bytes(""), signer);
     }
 
     // =========================================================================
@@ -89,7 +101,7 @@ contract DocumentRegistryTest is Test {
 
     /// @notice La verificación devuelve `true` cuando el firmante y la firma son correctos
     function test_VerifyDocument_ReturnsTrue_WhenValid() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         bool valid = registry.verifyDocument(docHash, signer, signature);
         assertTrue(valid);
@@ -97,7 +109,7 @@ contract DocumentRegistryTest is Test {
 
     /// @notice La verificación devuelve `false` si se proporciona un firmante diferente
     function test_VerifyDocument_ReturnsFalse_WrongSigner() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         bool valid = registry.verifyDocument(docHash, address(0x9999), signature);
         assertFalse(valid);
@@ -105,7 +117,7 @@ contract DocumentRegistryTest is Test {
 
     /// @notice La verificación devuelve `false` si la firma no coincide con la almacenada
     function test_VerifyDocument_ReturnsFalse_WrongSignature() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         bool valid = registry.verifyDocument(docHash, signer, bytes("wrong_signature"));
         assertFalse(valid);
@@ -123,17 +135,26 @@ contract DocumentRegistryTest is Test {
     // getDocumentInfo — obtener datos de un documento
     // =========================================================================
 
-    /// @notice Comprueba que los datos devueltos coinciden con los almacenados
+    /// @notice Comprueba que los datos devueltos coinciden con los almacenados (incluyendo CID)
     function test_GetDocumentInfo_ReturnsCorrectData() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
 
         DocumentRegistry.Document memory doc = registry.getDocumentInfo(docHash);
 
         assertEq(doc.hash, docHash);
+        assertEq(doc.cid, cid);
         assertEq(doc.timestamp, timestamp);
         assertEq(doc.signer, signer);
-        // Las firmas se comparan por hash porque `bytes` no soporta assertEq directo
         assertEq(keccak256(doc.signature), keccak256(signature));
+    }
+
+    /// @notice Verifica que el CID almacenado se recupera correctamente
+    function test_GetDocumentInfo_ReturnsCID() public {
+        string memory customCID = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        registry.storeDocumentHash(docHash, customCID, timestamp, signature, signer);
+
+        DocumentRegistry.Document memory doc = registry.getDocumentInfo(docHash);
+        assertEq(doc.cid, customCID);
     }
 
     /// @notice Obtener info de un hash inexistente debe revertir
@@ -155,7 +176,7 @@ contract DocumentRegistryTest is Test {
 
     /// @notice Después de almacenar, `isDocumentStored` debe devolver `true`
     function test_IsDocumentStored_ReturnsTrue_AfterStore() public {
-        registry.storeDocumentHash(docHash, timestamp, signature, signer);
+        registry.storeDocumentHash(docHash, cid, timestamp, signature, signer);
         assertTrue(registry.isDocumentStored(docHash));
     }
 
@@ -174,13 +195,13 @@ contract DocumentRegistryTest is Test {
         bytes32 hash2 = keccak256("doc2");
         bytes32 hash3 = keccak256("doc3");
 
-        registry.storeDocumentHash(hash1, timestamp, signature, signer);
+        registry.storeDocumentHash(hash1, "cid1", timestamp, signature, signer);
         assertEq(registry.getDocumentCount(), 1);
 
-        registry.storeDocumentHash(hash2, timestamp, signature, signer);
+        registry.storeDocumentHash(hash2, "cid2", timestamp, signature, signer);
         assertEq(registry.getDocumentCount(), 2);
 
-        registry.storeDocumentHash(hash3, timestamp, signature, signer);
+        registry.storeDocumentHash(hash3, "", timestamp, signature, signer);
         assertEq(registry.getDocumentCount(), 3);
     }
 
@@ -193,8 +214,8 @@ contract DocumentRegistryTest is Test {
         bytes32 hash1 = keccak256("doc1");
         bytes32 hash2 = keccak256("doc2");
 
-        registry.storeDocumentHash(hash1, timestamp, signature, signer);
-        registry.storeDocumentHash(hash2, timestamp, signature, signer);
+        registry.storeDocumentHash(hash1, cid, timestamp, signature, signer);
+        registry.storeDocumentHash(hash2, cid, timestamp, signature, signer);
 
         assertEq(registry.getDocumentHashByIndex(0), hash1);
         assertEq(registry.getDocumentHashByIndex(1), hash2);
@@ -203,6 +224,6 @@ contract DocumentRegistryTest is Test {
     /// @notice Acceder con un índice mayor al número de documentos debe revertir
     function test_GetDocumentHashByIndex_Reverts_OutOfBounds() public {
         vm.expectRevert("Index out of bounds");
-        registry.getDocumentHashByIndex(0); // array vacío → índice 0 ya está fuera de rango
+        registry.getDocumentHashByIndex(0);
     }
 }

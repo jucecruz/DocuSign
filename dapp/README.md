@@ -1,36 +1,144 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DocAuth — Frontend (Next.js)
 
-## Getting Started
+Interfaz web para el sistema de certificación de documentos DocAuth. Calcula el hash `keccak256` de un archivo localmente, lo firma con una wallet HD, opcionalmente lo sube a IPFS, y almacena la evidencia en la blockchain Ethereum.
 
-First, run the development server:
+---
+
+## Stack
+
+| Tecnología | Versión | Rol |
+|---|---|---|
+| Next.js | 16.x (App Router) | Framework web |
+| React | 19.x | UI |
+| TypeScript | ^5 | Tipado estático |
+| ethers.js | ^6 | Wallet + contrato |
+| Tailwind CSS | ^4 | Estilos |
+| lucide-react | ^1 | Iconos |
+
+---
+
+## Instalación
 
 ```bash
+cd dapp
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Abrir [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Variables de entorno (`dapp/.env.local`)
 
-## Learn More
+```env
+# Blockchain
+NEXT_PUBLIC_CONTRACT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
+NEXT_PUBLIC_RPC_URL=http://localhost:8545
+NEXT_PUBLIC_CHAIN_ID=31337
+NEXT_PUBLIC_MNEMONIC="test test test test test test test test test test test junk"
 
-To learn more about Next.js, take a look at the following resources:
+# IPFS — opcional
+NEXT_PUBLIC_IPFS_PROVIDER=local          # 'local' | 'pinata'
+NEXT_PUBLIC_IPFS_API_URL=http://localhost:5001
+NEXT_PUBLIC_IPFS_GATEWAY=https://ipfs.io/ipfs
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Pinata — solo si IPFS_PROVIDER=pinata (SIN prefijo NEXT_PUBLIC_)
+PINATA_API_KEY=
+PINATA_SECRET_KEY=
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+> El mnemonic de Anvil es público. Nunca usarlo en mainnet ni con fondos reales.
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Integración IPFS
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+La app soporta dos proveedores configurables via `NEXT_PUBLIC_IPFS_PROVIDER`:
+
+### Opción A — Kubo local (`provider=local`)
+
+Requiere tener [Kubo](https://docs.ipfs.tech/install/command-line/) instalado y corriendo:
+
+```bash
+ipfs daemon
+```
+
+Verificar que responde:
+```bash
+curl http://localhost:5001/api/v0/version
+```
+
+La app sube directamente al nodo local via `POST /api/v0/add?pin=true`. No requiere credenciales.
+
+### Opción B — Pinata (`provider=pinata`)
+
+1. Crear cuenta en [pinata.cloud](https://www.pinata.cloud/).
+2. Generar API Key con permiso `pinFileToIPFS`.
+3. Copiar `API Key` y `API Secret` en `.env.local` bajo `PINATA_API_KEY` / `PINATA_SECRET_KEY`.
+4. Las claves **nunca** usan el prefijo `NEXT_PUBLIC_` — son server-side únicamente.
+5. La app las expone via el API Route `/api/ipfs/upload` que actúa como proxy.
+
+### IPFS es opcional
+
+Si el usuario no tiene IPFS disponible, puede pulsar "Skip (hash only)" durante el flujo de firma. El documento se registra en blockchain solo con el hash; el campo `cid` queda vacío en el contrato. La verificación y el historial mostrarán "Not pinned to IPFS".
+
+---
+
+## Arquitectura de componentes
+
+```
+app/
+├── layout.tsx              # Root layout + WalletProvider (contexto global)
+├── page.tsx                # Tabs: Upload & Sign / Verify / History
+├── globals.css             # Tailwind v4 + variables CSS
+└── api/
+    └── ipfs/upload/
+        └── route.ts        # API Route: proxy server-side para Pinata
+
+components/
+├── FileUploader.tsx         # Drag & drop → calcula hash keccak256
+├── DocumentSigner.tsx       # Flujo 4-pasos: Upload → IPFS → Sign → Store
+├── DocumentVerifier.tsx     # Verifica autenticidad + link IPFS si disponible
+└── DocumentHistory.tsx      # Historial paginado con columna IPFS
+
+contexts/
+└── MetaMaskContext.tsx      # WalletProvider: HD wallets desde mnemonic
+
+hooks/
+└── useContract.ts           # ethers.js: storeDocumentHash, getDocumentInfo…
+
+lib/
+├── abi.ts                   # ABI del contrato DocumentRegistry
+└── ipfs.ts                  # uploadToIPFS(file) → CID, getCIDGatewayURL(cid)
+```
+
+### Flujo principal (DocumentSigner)
+
+```
+1. Upload    → FileUploader calcula keccak256 del archivo localmente
+2. IPFS      → (Opcional) uploadToIPFS(file) → CID almacenado en el nodo
+3. Sign      → wallet.signMessage(bytes(hash)) → firma ECDSA
+4. Store     → storeDocumentHash(hash, cid, timestamp, signature, signer)
+```
+
+### Flujo de verificación (DocumentVerifier)
+
+```
+1. Seleccionar archivo → calcular hash
+2. isDocumentStored(hash) → si false: "Not found"
+3. getDocumentInfo(hash)  → signer, timestamp, signature, cid
+4. (Opcional) comparar signer con dirección ingresada
+5. Si cid != "": mostrar botón "Download from IPFS"
+```
+
+---
+
+## Comandos útiles
+
+```bash
+npm run dev      # servidor de desarrollo en http://localhost:3000
+npm run build    # build de producción
+npm run lint     # ESLint
+npx tsc --noEmit # verificar tipos sin compilar
+```

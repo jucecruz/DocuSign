@@ -1,18 +1,32 @@
 'use client'
 
+/**
+ * DocumentHistory.tsx — Historial de documentos registrados con links IPFS.
+ *
+ * Carga todos los documentos del contrato por iteración de índice:
+ *   getDocumentCount() → loop → getDocumentHashByIndex(i) → getDocumentInfo(hash)
+ *
+ * La columna "File" muestra un link al gateway de IPFS si el documento
+ * fue subido a IPFS (cid != ""), o "—" si fue registrado solo por hash.
+ *
+ * Layout: tabla en pantallas sm+, cards individuales en móvil.
+ */
+
 import { useState, useCallback } from 'react'
-import { RefreshCw, Clock, FileText, Wallet, Calendar, Key } from 'lucide-react'
+import { RefreshCw, Clock, FileText, Wallet, Calendar, Key, Link2 } from 'lucide-react'
 import { useContract, type DocumentInfo } from '@/hooks/useContract'
 import { useWallet } from '@/contexts/MetaMaskContext'
+import { getCIDGatewayURL } from '@/lib/ipfs'
 
 export function DocumentHistory() {
   const { isConnected } = useWallet()
   const { getDocumentCount, getDocumentHashByIndex, getDocumentInfo } = useContract()
 
-  const [docs, setDocs] = useState<DocumentInfo[]>([])
+  const [docs, setDocs]     = useState<DocumentInfo[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError]   = useState<string | null>(null)
 
+  /** Carga todos los documentos iterando por índice desde el contrato. */
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -32,6 +46,7 @@ export function DocumentHistory() {
     }
   }, [getDocumentCount, getDocumentHashByIndex, getDocumentInfo])
 
+  /** Abrevia un valor hex para mostrar solo los extremos. */
   const shortHex = (hex: string, start = 8, end = 6) => `${hex.slice(0, start)}…${hex.slice(-end)}`
 
   return (
@@ -80,7 +95,6 @@ export function DocumentHistory() {
         </div>
       )}
 
-      {/* Lista de documentos — cards en mobile, tabla en desktop */}
       {docs.length > 0 && (
         <>
           {/* TABLA — visible en sm+ */}
@@ -93,6 +107,7 @@ export function DocumentHistory() {
                     { icon: <Wallet className="w-3 h-3" />, label: 'Signer' },
                     { icon: <Calendar className="w-3 h-3" />, label: 'Date' },
                     { icon: <Key className="w-3 h-3" />, label: 'Signature' },
+                    { icon: <Link2 className="w-3 h-3" />, label: 'File' },
                   ].map((col) => (
                     <th key={col.label} className="text-left px-4 py-3">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
@@ -117,13 +132,30 @@ export function DocumentHistory() {
                     <td className="px-4 py-3 font-mono text-xs text-zinc-500 dark:text-zinc-500">
                       {shortHex(doc.signature)}
                     </td>
+                    {/* Columna IPFS: link al gateway si el documento tiene CID */}
+                    <td className="px-4 py-3">
+                      {doc.cid ? (
+                        <a
+                          href={getCIDGatewayURL(doc.cid)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                          title={doc.cid}
+                        >
+                          <Link2 className="w-3 h-3 shrink-0" />
+                          IPFS ↗
+                        </a>
+                      ) : (
+                        <span className="text-xs text-zinc-300 dark:text-zinc-700">—</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          {/* CARDS — visible en mobile */}
+          {/* CARDS — visible en móvil */}
           <div className="sm:hidden space-y-3">
             {docs.map((doc, i) => (
               <div key={i} className="rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
@@ -131,7 +163,7 @@ export function DocumentHistory() {
                   <span className="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Document #{i + 1}</span>
                   <span className="text-xs text-zinc-400">{new Date(Number(doc.timestamp) * 1000).toLocaleDateString()}</span>
                 </div>
-                <div className="px-4 py-3 space-y-2">
+                <div className="px-4 py-3 space-y-2.5">
                   <div>
                     <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-0.5">Hash</p>
                     <p className="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">{shortHex(doc.hash, 10, 8)}</p>
@@ -143,6 +175,23 @@ export function DocumentHistory() {
                   <div>
                     <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-0.5">Signature</p>
                     <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 break-all">{shortHex(doc.signature, 10, 8)}</p>
+                  </div>
+                  {/* IPFS en cards mobile */}
+                  <div>
+                    <p className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-0.5">IPFS File</p>
+                    {doc.cid ? (
+                      <a
+                        href={getCIDGatewayURL(doc.cid)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        Download from IPFS ↗
+                      </a>
+                    ) : (
+                      <span className="text-xs text-zinc-400 dark:text-zinc-600 italic">Not pinned to IPFS</span>
+                    )}
                   </div>
                 </div>
               </div>

@@ -61,22 +61,29 @@ Sistema descentralizado para almacenar y verificar la autenticidad de documentos
                 └───────────────────────────────┘
 ```
 
-### Flujo de autenticación
+### Flujo de autenticación (con IPFS opcional)
 
 ```
 Archivo local
      │
-     ▼
-keccak256(bytes)  ──→  hash (bytes32)
-     │
-     ▼
-wallet.signMessage(hash)  ──→  signature (bytes, ECDSA)
-     │
-     ▼
-storeDocumentHash(hash, timestamp, signature, signer)
-     │
-     ▼
-Blockchain  ──→  inmutable · trazable · descentralizado
+     ├──→ keccak256(bytes)  ──────────────────────────────→  hash (bytes32)
+     │                                                             │
+     │    (Opcional)                                               │
+     └──→ uploadToIPFS(file)  ──→  CID de IPFS                   │
+               │                       │                          │
+               │ (Kubo local           │                          │
+               │  o Pinata)            │                          │
+               ▼                       ▼                          │
+          ipfs daemon          "QmXxx..." / ""                    │
+                                       │                          │
+                                       ▼                          ▼
+                              wallet.signMessage(hash)  ──→  signature (ECDSA)
+                                                                   │
+                                                                   ▼
+                              storeDocumentHash(hash, cid, timestamp, signature, signer)
+                                                                   │
+                                                                   ▼
+                                                    Blockchain  ──→  inmutable · trazable
 ```
 
 ---
@@ -120,6 +127,7 @@ Blockchain  ──→  inmutable · trazable · descentralizado
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) — `curl -L https://foundry.paradigm.xyz | bash`
 - [Node.js](https://nodejs.org/) `>= 18`
 - [Git](https://git-scm.com/)
+- **Para IPFS local (opcional):** [Kubo](https://docs.ipfs.tech/install/command-line/) — nodo IPFS de referencia
 
 Verificar instalaciones:
 
@@ -127,6 +135,7 @@ Verificar instalaciones:
 forge --version
 anvil --version
 node --version
+ipfs version   # solo si se usa IPFS local
 ```
 
 ---
@@ -158,15 +167,37 @@ npm install
 El archivo `dapp/.env.local` ya contiene la configuración para desarrollo local:
 
 ```env
+# Blockchain
 NEXT_PUBLIC_CONTRACT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
 NEXT_PUBLIC_RPC_URL=http://localhost:8545
 NEXT_PUBLIC_CHAIN_ID=31337
 NEXT_PUBLIC_MNEMONIC="test test test test test test test test test test test junk"
+
+# IPFS (opcional) — cambiar PROVIDER a 'pinata' si no se tiene Kubo
+NEXT_PUBLIC_IPFS_PROVIDER=local
+NEXT_PUBLIC_IPFS_API_URL=http://localhost:5001
+NEXT_PUBLIC_IPFS_GATEWAY=https://ipfs.io/ipfs
+
+# Solo si IPFS_PROVIDER=pinata (SIN prefijo NEXT_PUBLIC_ — server-side)
+PINATA_API_KEY=
+PINATA_SECRET_KEY=
 ```
 
 > **Nota:** El mnemonic de Anvil es público y conocido. Nunca usar en mainnet ni con fondos reales.
 
-### 5. Iniciar Anvil (terminal 1)
+### 5. (Opcional) Iniciar Kubo para IPFS local (terminal 1)
+
+Si quieres almacenar los archivos completos en IPFS además del hash:
+
+```bash
+ipfs daemon
+```
+
+Verificar: `curl http://localhost:5001/api/v0/version`
+
+Si no tienes Kubo, puedes saltar el paso IPFS en la UI o configurar Pinata en `.env.local`.
+
+### 6. Iniciar Anvil (terminal 1 o 2)
 
 ```bash
 anvil
@@ -174,7 +205,7 @@ anvil
 
 Anvil arranca con 10 cuentas pre-financiadas con 10.000 ETH cada una, derivadas del mnemonic estándar.
 
-### 6. Desplegar el contrato (terminal 2)
+### 7. Desplegar el contrato (terminal 2 o 3)
 
 ```bash
 forge script sc/script/Deploy.s.sol:DeployDocumentRegistry \
@@ -185,7 +216,7 @@ forge script sc/script/Deploy.s.sol:DeployDocumentRegistry \
 
 El contrato se desplegará en `0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9` (determinístico con Anvil).
 
-### 7. Iniciar el frontend (terminal 3)
+### 8. Iniciar el frontend (terminal 3 o 4)
 
 ```bash
 cd dapp
@@ -252,13 +283,13 @@ eth-database-document/
 
 1. Abrir la pestaña **Upload & Sign**.
 2. Seleccionar una wallet del dropdown (10 cuentas Anvil disponibles) y hacer clic en **Connect Wallet**.
-3. Arrastrar un archivo al área de carga o hacer clic para seleccionarlo.
-4. La app calcula automáticamente el hash `keccak256` del archivo.
-5. Hacer clic en **Sign Document** — se muestra una confirmación con el hash que se firmará.
-6. Confirmar. La wallet firma el hash con ECDSA (`wallet.signMessage`).
-7. Hacer clic en **Store on Blockchain** — se muestra una advertencia de irreversibilidad.
-8. Confirmar. La transacción envía `storeDocumentHash(hash, timestamp, signature, signer)` al contrato.
-9. Tras el receipt, se muestra el hash de transacción y confirmación de éxito.
+3. Arrastrar un archivo al área de carga o hacer clic para seleccionarlo — se calcula el hash `keccak256` automáticamente.
+4. **Paso IPFS (opcional):**
+   - Hacer clic en **Upload to IPFS** para subir el archivo a IPFS y obtener un CID.
+   - O hacer clic en **Skip (hash only)** para registrar solo el hash sin IPFS.
+5. Hacer clic en **Sign Document** — confirmación con el hash que se firmará con ECDSA.
+6. Hacer clic en **Store on Blockchain** — envía `storeDocumentHash(hash, cid, timestamp, signature, signer)`.
+7. Tras el receipt: confirmación con el hash de transacción y link de descarga IPFS (si se subió).
 
 ### Verify (Verificar)
 
@@ -291,10 +322,11 @@ eth-database-document/
 
 ```solidity
 struct Document {
-    bytes32 hash;       // Keccak256 del archivo
+    bytes32 hash;       // keccak256 del archivo (clave del mapping)
+    string  cid;        // CID de IPFS ("" si no se usó IPFS)
     uint256 timestamp;  // Unix timestamp del registro
     address signer;     // Firmante que registró el documento
-    bytes signature;    // Firma ECDSA del hash
+    bytes   signature;  // Firma ECDSA del hash
 }
 ```
 
@@ -304,9 +336,9 @@ struct Document {
 
 | Función | Tipo | Descripción |
 |---|---|---|
-| `storeDocumentHash(bytes32, uint256, bytes, address)` | `external` | Almacena un documento. Revierte si ya existe. |
+| `storeDocumentHash(bytes32, string, uint256, bytes, address)` | `external` | Almacena un documento con CID opcional. Revierte si ya existe. |
 | `verifyDocument(bytes32, address, bytes)` | `external` | Verifica hash + firmante + firma. Emite evento. |
-| `getDocumentInfo(bytes32)` | `view` | Retorna el struct Document completo. |
+| `getDocumentInfo(bytes32)` | `view` | Retorna el struct Document completo (incluido CID). |
 | `isDocumentStored(bytes32)` | `view` | Verifica existencia sin leer datos. |
 | `getDocumentCount()` | `view` | Total de documentos registrados. |
 | `getDocumentHashByIndex(uint256)` | `view` | Hash por posición en el array. |
@@ -314,7 +346,7 @@ struct Document {
 ### Eventos
 
 ```solidity
-event DocumentStored(bytes32 indexed hash, address indexed signer, uint256 timestamp);
+event DocumentStored(bytes32 indexed hash, address indexed signer, uint256 timestamp, string cid);
 event DocumentVerified(bytes32 indexed hash, address indexed signer, bool valid);
 ```
 
@@ -370,12 +402,14 @@ forge test -vvv
 forge test --gas-report
 ```
 
-### Suite de tests (17 tests — 100% passing)
+### Suite de tests (19 tests — 100% passing)
 
 | Test | Descripción |
 |---|---|
-| `test_StoreDocument_Success` | Almacena correctamente un documento |
-| `test_StoreDocument_EmitsEvent` | Verifica emisión del evento `DocumentStored` |
+| `test_StoreDocument_Success` | Almacena correctamente un documento con CID |
+| `test_StoreDocument_WithEmptyCID` | Almacena un documento sin IPFS (`cid=""`) |
+| `test_StoreDocument_EmitsEvent` | Verifica emisión del evento `DocumentStored` con CID |
+| `test_GetDocumentInfo_ReturnsCID` | Verifica que el CID se almacene y retorne correctamente |
 | `test_StoreDocument_RejectsDuplicate` | Rechaza hash ya registrado |
 | `test_StoreDocument_RejectsZeroSigner` | Rechaza `address(0)` como firmante |
 | `test_StoreDocument_RejectsEmptySignature` | Rechaza firma vacía |
