@@ -3,7 +3,7 @@ cache/
 out/
 
 # Foundry / Solidity
-lib/
+/lib/
 
 # Commonly ignored directories
 .logs/
