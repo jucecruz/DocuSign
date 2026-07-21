@@ -37,9 +37,9 @@ export default function Home() {
               <ShieldCheck className="w-4.5 h-4.5 text-white" strokeWidth={2.5} />
             </div>
             <div className="leading-none">
-              <span className="text-base font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">DocAuth</span>
+              <span className="text-base font-bold text-zinc-900 dark:text-zinc-50 tracking-tight">Digital Documents Authentication</span>
               <span className="hidden sm:block text-[11px] text-zinc-400 dark:text-zinc-500 leading-none mt-0.5">
-                Document Authentication on Ethereum
+                On Ethereum
               </span>
             </div>
           </div>
@@ -154,7 +154,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-6 text-center text-xs text-zinc-400 dark:text-zinc-600">
-        DocAuth &middot; Ethereum Anvil (Chain ID 31337)
+        Autenticidad de Documentos Digitales &middot; Ethereum Anvil (Chain ID 31337)
       </footer>
     </div>
   )

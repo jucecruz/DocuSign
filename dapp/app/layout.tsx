@@ -31,7 +31,7 @@ const geistMono = Geist_Mono({
 
 // Metadatos estáticos que Next.js inyecta en el <head> de cada página
 export const metadata: Metadata = {
-  title: "DocAuth — Document Authentication on Ethereum",
+  title: "Autenticidad de Documentos Digitales — Firmas de documentos digitales en Ethereum",
   description: "Store and verify document authenticity using blockchain",
 };
 

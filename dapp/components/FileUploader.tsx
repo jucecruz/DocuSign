@@ -84,7 +84,7 @@ export function FileUploader({ onHashReady }: FileUploaderProps) {
             </div>
             <div>
               <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                {dragging ? 'Drop to compute hash' : 'Drop your document here'}
+                {dragging ? 'Drop to compute hash' : 'Upload your document here'}
               </p>
               <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-1">
                 or <span className="text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer">click to browse</span>

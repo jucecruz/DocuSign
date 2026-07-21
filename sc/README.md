@@ -99,16 +99,30 @@ forge script sc/script/Deploy.s.sol:DeployDocumentRegistry \
 
 Tras el despliegue, actualizar `NEXT_PUBLIC_CONTRACT_ADDRESS` en `dapp/.env.local` con la nueva dirección.
 
-### Despliegue en testnet
+### Despliegue en Sepolia
+
+1. Copiar `.env.example` (en la raíz de `eth-database-document/`) a `.env` y completar `SEPOLIA_RPC_URL`, `PRIVATE_KEY` y `ETHERSCAN_API_KEY`.
+2. Cargar las variables de entorno en la sesión de shell:
+
+```bash
+# bash / zsh
+export $(grep -v '^#' .env | xargs)
+
+# PowerShell
+Get-Content .env | ForEach-Object { if ($_ -match '^\s*([^#=]+)=(.*)$') { Set-Item "Env:$($matches[1].Trim())" $matches[2].Trim() } }
+```
+
+3. Ejecutar el script (el alias `sepolia` de RPC y la API key de Etherscan ya están configurados en `foundry.toml`):
 
 ```bash
 forge script sc/script/Deploy.s.sol:DeployDocumentRegistry \
-  --rpc-url $SEPOLIA_RPC_URL \
+  --rpc-url sepolia \
   --private-key $PRIVATE_KEY \
   --broadcast \
-  --verify \
-  --etherscan-api-key $ETHERSCAN_API_KEY
+  --verify
 ```
+
+Tras el despliegue, actualizar `NEXT_PUBLIC_CONTRACT_ADDRESS` en `dapp/.env.local` con la dirección impresa en consola.
 
 ---
 
