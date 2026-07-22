@@ -3,132 +3,174 @@
 /**
  * MetaMaskContext.tsx — Contexto de wallet para la dapp DocAuth.
  *
- * En lugar de usar MetaMask real, esta dapp trabaja directamente con las
- * 10 wallets predeterminadas que Anvil (la blockchain local de Foundry) genera
- * a partir de un mnemónico HD determinístico.
- *
- * ¿Por qué así?
- *   - Permite desarrollo/testing sin extensión de navegador.
- *   - Las claves privadas de Anvil son públicas y conocidas; nunca usar en mainnet.
- *
- * Cómo se derivan las wallets:
- *   Se usa el path de derivación BIP44 estándar para Ethereum:
- *   m/44'/60'/0'/0/<índice>   (índice 0..9 → 10 wallets)
- *   ethers.HDNodeWallet.fromPhrase genera cada wallet a partir del mnemónico.
+ * Conecta con la extensión de MetaMask real del usuario (window.ethereum, EIP-1193)
+ * en vez de derivar wallets desde un mnemonic hardcodeado. Cada usuario firma con
+ * su propia cuenta; las claves privadas nunca pasan por esta app.
  *
  * Variables de entorno requeridas (en .env.local):
- *   NEXT_PUBLIC_MNEMONIC  → Mnemónico de Anvil (12 palabras, visible en `anvil` al arrancar).
- *   NEXT_PUBLIC_RPC_URL   → URL del nodo RPC (default: http://localhost:8545).
+ *   NEXT_PUBLIC_RPC_URL   → URL del nodo RPC usado para lecturas (sin necesidad de wallet).
+ *   NEXT_PUBLIC_CHAIN_ID  → Chain ID esperado (ej. 11155111 para Sepolia). Si la wallet
+ *                           está en otra red, se le pide cambiar via wallet_switchEthereumChain.
  *
  * Exports:
  *   - `WalletProvider`  → Componente proveedor que envuelve la app.
  *   - `useWallet()`     → Hook para consumir el contexto desde cualquier componente.
- *   - `AnvilWallet`     → Tipo con `address` y `privateKey`.
  */
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { ethers } from 'ethers'
 
-// Lee el mnemónico y la URL RPC desde variables de entorno de Next.js
-const ANVIL_MNEMONIC = process.env.NEXT_PUBLIC_MNEMONIC || ''
-const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8545'
-
-/** Representación simplificada de una wallet de Anvil. */
-export interface AnvilWallet {
-  address: string
-  privateKey: string
+declare global {
+  interface Window {
+    ethereum?: ethers.Eip1193Provider & {
+      on?: (event: string, handler: (...args: unknown[]) => void) => void
+      removeListener?: (event: string, handler: (...args: unknown[]) => void) => void
+    }
+  }
 }
 
-/**
- * Genera las 10 wallets de Anvil al cargar el módulo (una sola vez).
- * Usar `Array.from({ length: 10 }, ...)` para iterar sobre los índices 0..9.
- */
-const ANVIL_WALLETS: AnvilWallet[] = Array.from({ length: 10 }, (_, i) => {
-  const path = `m/44'/60'/0'/0/${i}` // Path BIP44 para el índice i
-  const wallet = ethers.HDNodeWallet.fromPhrase(ANVIL_MNEMONIC, undefined, path)
-  return { address: wallet.address, privateKey: wallet.privateKey }
-})
+const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'http://localhost:8545'
+const EXPECTED_CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID || 11155111)
+
+const SEPOLIA_CHAIN_PARAMS = {
+  chainId: '0xaa36a7', // 11155111
+  chainName: 'Sepolia',
+  nativeCurrency: { name: 'Sepolia ETH', symbol: 'ETH', decimals: 18 },
+  rpcUrls: [RPC_URL],
+  blockExplorerUrls: ['https://sepolia.etherscan.io'],
+}
+
+/** Wallet conectada actualmente (solo la dirección; la firma la maneja MetaMask). */
+export interface ConnectedWallet {
+  address: string
+}
 
 /** Forma del valor expuesto por el contexto de wallet. */
 interface WalletContextValue {
-  /** Lista de las 10 wallets disponibles de Anvil. */
-  wallets: AnvilWallet[]
-  /** Wallet actualmente seleccionada por el usuario, o null si no hay ninguna. */
-  activeWallet: AnvilWallet | null
-  /** true si hay una wallet activa seleccionada. */
+  /** Wallet actualmente conectada, o null si no hay ninguna. */
+  activeWallet: ConnectedWallet | null
+  /** true si hay una wallet conectada via MetaMask. */
   isConnected: boolean
-  /** Proveedor JSON-RPC apuntando a Anvil (solo lectura, sin signer). */
+  /** Chain ID reportado por MetaMask, o null si no está conectado. */
+  chainId: number | null
+  /** true si la wallet conectada está en una red distinta a NEXT_PUBLIC_CHAIN_ID. */
+  isWrongNetwork: boolean
+  /** Proveedor JSON-RPC de solo lectura (no requiere wallet conectada). */
   provider: ethers.JsonRpcProvider
-  /** Selecciona la wallet del índice dado como activa. */
-  connect: (walletIndex: number) => void
-  /** Deselecciona la wallet activa. */
+  /** Solicita conexión a MetaMask (eth_requestAccounts) y valida/pide cambiar de red. */
+  connect: () => Promise<void>
+  /** Limpia el estado de conexión local (MetaMask no soporta "desconectar" de verdad). */
   disconnect: () => void
-  /** Cambia la wallet activa a otro índice. */
-  switchWallet: (walletIndex: number) => void
-  /** Devuelve un ethers.Wallet (signer) listo para firmar transacciones. */
-  getSigner: () => ethers.Wallet | null
-  /** Firma un mensaje con la wallet activa. Lanza error si no hay wallet conectada. */
+  /** Pide a MetaMask cambiar a la red esperada (NEXT_PUBLIC_CHAIN_ID). */
+  switchToExpectedChain: () => Promise<void>
+  /** Devuelve el signer de MetaMask listo para firmar/enviar transacciones, o null. */
+  getSigner: () => ethers.JsonRpcSigner | null
+  /** Firma un mensaje (bytes o string) con la cuenta activa de MetaMask. */
   signMessage: (message: string | Uint8Array) => Promise<string>
 }
 
-// Contexto interno; null solo antes de montar el Provider
 const WalletContext = createContext<WalletContextValue | null>(null)
 
-// Proveedor JSON-RPC compartido (singleton): apunta a Anvil local
+// Proveedor JSON-RPC compartido (singleton) para lecturas, independiente de MetaMask
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 
-/**
- * Componente proveedor. Debe envolver toda la aplicación (en layout.tsx).
- * Gestiona el estado de la wallet activa y expone las acciones al árbol de componentes.
- */
 export function WalletProvider({ children }: { children: ReactNode }) {
-  const [activeWallet, setActiveWallet] = useState<AnvilWallet | null>(null)
+  const [address, setAddress] = useState<string | null>(null)
+  const [chainId, setChainId] = useState<number | null>(null)
+  const [signer, setSigner] = useState<ethers.JsonRpcSigner | null>(null)
+  const browserProviderRef = useRef<ethers.BrowserProvider | null>(null)
 
-  // Selecciona la wallet por índice; ignora índices fuera de rango (devuelve null)
-  const connect = useCallback((walletIndex: number) => {
-    setActiveWallet(ANVIL_WALLETS[walletIndex] ?? null)
+  const refreshSigner = useCallback(async (browserProvider: ethers.BrowserProvider) => {
+    const accounts = await browserProvider.listAccounts()
+    if (accounts.length === 0) {
+      setAddress(null)
+      setSigner(null)
+      return
+    }
+    const newSigner = await browserProvider.getSigner()
+    setAddress(await newSigner.getAddress())
+    setSigner(newSigner)
   }, [])
 
-  // Limpia la wallet activa
+  const connect = useCallback(async () => {
+    if (!window.ethereum) {
+      throw new Error('MetaMask no está instalado. Instálalo desde metamask.io para continuar.')
+    }
+    const browserProvider = new ethers.BrowserProvider(window.ethereum)
+    browserProviderRef.current = browserProvider
+
+    await browserProvider.send('eth_requestAccounts', [])
+    await refreshSigner(browserProvider)
+
+    const network = await browserProvider.getNetwork()
+    setChainId(Number(network.chainId))
+  }, [refreshSigner])
+
   const disconnect = useCallback(() => {
-    setActiveWallet(null)
+    setAddress(null)
+    setSigner(null)
+    setChainId(null)
   }, [])
 
-  // Equivalente a connect; existe para mayor claridad semántica en la UI
-  const switchWallet = useCallback((walletIndex: number) => {
-    setActiveWallet(ANVIL_WALLETS[walletIndex] ?? null)
+  const switchToExpectedChain = useCallback(async () => {
+    if (!window.ethereum) return
+    const hexChainId = `0x${EXPECTED_CHAIN_ID.toString(16)}`
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: hexChainId }],
+      })
+    } catch (err) {
+      const code = (err as { code?: number })?.code
+      if (code === 4902 && EXPECTED_CHAIN_ID === 11155111) {
+        await window.ethereum.request({
+          method: 'wallet_addEthereumChain',
+          params: [SEPOLIA_CHAIN_PARAMS],
+        })
+      } else {
+        throw err
+      }
+    }
   }, [])
 
-  /**
-   * Crea un ethers.Wallet vinculado al provider de Anvil.
-   * Este signer puede enviar transacciones y firmar mensajes.
-   */
-  const getSigner = useCallback((): ethers.Wallet | null => {
-    if (!activeWallet) return null
-    return new ethers.Wallet(activeWallet.privateKey, provider)
-  }, [activeWallet])
+  const getSigner = useCallback((): ethers.JsonRpcSigner | null => signer, [signer])
 
-  /**
-   * Firma un mensaje arbitrario con la clave privada de la wallet activa.
-   * `message` puede ser un string o un Uint8Array (bytes crudos).
-   * Para firmar hashes de documentos se pasan bytes crudos para evitar el prefijo EIP-191.
-   */
   const signMessage = useCallback(async (message: string | Uint8Array): Promise<string> => {
-    const signer = getSigner()
     if (!signer) throw new Error('No wallet connected')
     return signer.signMessage(message)
-  }, [getSigner])
+  }, [signer])
+
+  // Reacciona a cambios de cuenta/red hechos desde la propia extensión de MetaMask
+  useEffect(() => {
+    if (!window.ethereum?.on) return
+
+    const handleAccountsChanged = () => {
+      if (browserProviderRef.current) refreshSigner(browserProviderRef.current)
+    }
+    const handleChainChanged = (newChainId: unknown) => {
+      setChainId(Number(newChainId as string))
+    }
+
+    window.ethereum.on('accountsChanged', handleAccountsChanged)
+    window.ethereum.on('chainChanged', handleChainChanged)
+
+    return () => {
+      window.ethereum?.removeListener?.('accountsChanged', handleAccountsChanged)
+      window.ethereum?.removeListener?.('chainChanged', handleChainChanged)
+    }
+  }, [refreshSigner])
 
   return (
     <WalletContext.Provider
       value={{
-        wallets: ANVIL_WALLETS,
-        activeWallet,
-        isConnected: activeWallet !== null,
+        activeWallet: address ? { address } : null,
+        isConnected: address !== null,
+        chainId,
+        isWrongNetwork: chainId !== null && chainId !== EXPECTED_CHAIN_ID,
         provider,
         connect,
         disconnect,
-        switchWallet,
+        switchToExpectedChain,
         getSigner,
         signMessage,
       }}

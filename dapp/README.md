@@ -34,9 +34,8 @@ Abrir [http://localhost:3000](http://localhost:3000).
 ```env
 # Blockchain
 NEXT_PUBLIC_CONTRACT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-NEXT_PUBLIC_RPC_URL=http://localhost:8545
-NEXT_PUBLIC_CHAIN_ID=31337
-NEXT_PUBLIC_MNEMONIC="test test test test test test test test test test test junk"
+NEXT_PUBLIC_RPC_URL=http://localhost:8545   # usado para lecturas (view), independiente de la wallet
+NEXT_PUBLIC_CHAIN_ID=31337                  # red esperada; si MetaMask está en otra, se le pide cambiar
 
 # IPFS — opcional
 NEXT_PUBLIC_IPFS_PROVIDER=local          # 'local' | 'pinata'
@@ -48,7 +47,7 @@ PINATA_API_KEY=
 PINATA_SECRET_KEY=
 ```
 
-> El mnemonic de Anvil es público. Nunca usarlo en mainnet ni con fondos reales.
+> La wallet se conecta via MetaMask real (`window.ethereum`). Cada usuario firma con su propia cuenta; no hay claves privadas embebidas en la app.
 
 ---
 
@@ -103,7 +102,7 @@ components/
 └── DocumentHistory.tsx      # Historial paginado con columna IPFS
 
 contexts/
-└── MetaMaskContext.tsx      # WalletProvider: HD wallets desde mnemonic
+└── MetaMaskContext.tsx      # WalletProvider: conexión real a MetaMask (window.ethereum)
 
 hooks/
 └── useContract.ts           # ethers.js: storeDocumentHash, getDocumentInfo…
