@@ -12,7 +12,7 @@
  * Layout: tabla en pantallas sm+, cards individuales en móvil.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { RefreshCw, Clock, FileText, Wallet, Calendar, Key, Link2 } from 'lucide-react'
 import { useContract, type DocumentInfo } from '@/hooks/useContract'
 import { useWallet } from '@/contexts/MetaMaskContext'
@@ -45,6 +45,11 @@ export function DocumentHistory() {
       setLoading(false)
     }
   }, [getDocumentCount, getDocumentHashByIndex, getDocumentInfo])
+
+  // Carga automáticamente al montar (lectura pública, no requiere wallet conectada)
+  useEffect(() => {
+    load()
+  }, [load])
 
   /** Abrevia un valor hex para mostrar solo los extremos. */
   const shortHex = (hex: string, start = 8, end = 6) => `${hex.slice(0, start)}…${hex.slice(-end)}`
@@ -90,7 +95,7 @@ export function DocumentHistory() {
           </div>
           <div className="text-center">
             <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">No documents stored yet</p>
-            <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Connect a wallet and click Refresh to load</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Documents registered on-chain will appear here</p>
           </div>
         </div>
       )}
