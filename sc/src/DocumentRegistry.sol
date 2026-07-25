@@ -17,7 +17,6 @@ pragma solidity ^0.8.19;
  *   6. Si el documento tiene CID, se puede recuperar el archivo via el gateway de IPFS.
  */
 contract DocumentRegistry {
-
     // -------------------------------------------------------------------------
     // Estructuras de datos
     // -------------------------------------------------------------------------
@@ -113,13 +112,8 @@ contract DocumentRegistry {
         require(_signer != address(0), "Invalid signer address");
         require(_signature.length > 0, "Signature cannot be empty");
 
-        documents[_hash] = Document({
-            hash: _hash,
-            cid: _cid,
-            timestamp: _timestamp,
-            signer: _signer,
-            signature: _signature
-        });
+        documents[_hash] =
+            Document({hash: _hash, cid: _cid, timestamp: _timestamp, signer: _signer, signature: _signature});
         documentHashes.push(_hash);
 
         emit DocumentStored(_hash, _signer, _timestamp, _cid);
@@ -134,14 +128,13 @@ contract DocumentRegistry {
      * @param _signature Firma que se quiere comprobar.
      * @return valid `true` si tanto el firmante como la firma coinciden con el registro.
      */
-    function verifyDocument(
-        bytes32 _hash,
-        address _signer,
-        bytes memory _signature
-    ) external documentExists(_hash) returns (bool) {
+    function verifyDocument(bytes32 _hash, address _signer, bytes memory _signature)
+        external
+        documentExists(_hash)
+        returns (bool)
+    {
         Document storage doc = documents[_hash];
-        bool valid = doc.signer == _signer &&
-            keccak256(doc.signature) == keccak256(_signature);
+        bool valid = doc.signer == _signer && keccak256(doc.signature) == keccak256(_signature);
 
         emit DocumentVerified(_hash, _signer, valid);
         return valid;
